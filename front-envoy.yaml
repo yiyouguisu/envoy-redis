@@ -1,0 +1,159 @@
+static_resources:
+  listeners:
+  - name: redis_listener
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 10001
+    filter_chains:
+    - filter_chain_match: 
+        destination_port: 6379
+      filters:
+      - name: envoy.redis_proxy
+        config:
+          stat_prefix: egress_redis
+          latency_in_micros: true
+          downstream_auth_password: 
+            inline_string: "Nt201412"
+          prefix_routes:
+            routes:
+              - prefix: "ab"
+                remove_prefix: true
+                cluster: "redis_cluster_A"
+                request_mirror_policy: 
+                  cluster: "redis_cluster_B"
+                  exclude_read_commands: false
+              - prefix: "abc"
+                remove_prefix: true
+                cluster: "redis_cluster_B"
+            case_insensitive: true
+            catch_all_route:
+              cluster: "redis_cluster_C"
+          settings:
+            op_timeout: 5s
+    - filter_chain_match: 
+        destination_port: 5000
+      filters:
+      - name: envoy.http_connection_manager
+        config:
+          generate_request_id: true
+          tracing:
+            operation_name: egress
+          codec_type: auto
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains:
+              - "*"
+              routes:
+              - match:
+                  prefix: "/service/1"
+                route:
+                  cluster: service1
+          http_filters:
+          - name: envoy.router
+            config: {}
+  clusters:
+  - name: service1
+    connect_timeout: 0.250s
+    type: strict_dns
+    lb_policy: round_robin
+    http2_protocol_options: {}
+    load_assignment:
+      cluster_name: service1
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: service1
+                port_value: 80
+  - name: redis_cluster_A
+    connect_timeout: 1s
+    type: strict_dns
+    lb_policy: MAGLEV
+    health_checks:
+    - timeout: 3s
+      healthy_threshold: 1
+      interval: 8s
+      unhealthy_threshold: 3
+      custom_health_check:
+        name: envoy.health_checkers.redis
+        config:
+          key: foo
+    load_assignment:
+      cluster_name: redis_cluster_A
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 172.18.0.2
+                port_value: 6379
+        - endpoint:
+            address:
+              socket_address:
+                address: 172.18.0.3
+                port_value: 6379
+  - name: redis_cluster_B
+    connect_timeout: 1s
+    type: strict_dns
+    lb_policy: MAGLEV
+    health_checks:
+    - timeout: 3s
+      healthy_threshold: 1
+      interval: 8s
+      unhealthy_threshold: 3
+      custom_health_check:
+        name: envoy.health_checkers.redis
+        config:
+          key: foo
+    load_assignment:
+      cluster_name: redis_cluster_B
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 172.18.0.4
+                port_value: 6379
+        - endpoint:
+            address:
+              socket_address:
+                address: 172.18.0.5
+                port_value: 6379
+  - name: redis_cluster_C
+    connect_timeout: 1s
+    type: strict_dns
+    lb_policy: MAGLEV
+    extension_protocol_options:
+      envoy.redis_proxy:
+        auth_password:
+          inline_string: "nt201412"
+    # health_checks:
+    # - timeout: 3s
+    #   healthy_threshold: 1
+    #   interval: 8s
+    #   unhealthy_threshold: 3
+    #   custom_health_check:
+    #     name: envoy.health_checkers.redis
+    #     config:
+    #       key: foo
+    load_assignment:
+      cluster_name: redis_cluster_C
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 172.18.0.7
+                port_value: 6379
+
+admin:
+  access_log_path: "/dev/null"
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
